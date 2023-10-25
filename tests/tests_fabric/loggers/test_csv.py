@@ -11,7 +11,10 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import csv
+import itertools
 import os
+from typing import Dict, List, Set, Tuple
 from unittest.mock import MagicMock
 
 import pytest
@@ -150,33 +153,52 @@ def test_append_columns(tmp_path):
 
     # initial metrics
     logger.log_metrics({"a": 1, "b": 2})
+    _assert_csv_content(
+        logger.experiment.metrics_file_path,
+        expected_headers={"step", "a", "b"},
+        expected_content=[{"step": "0", "a": "1", "b": "2"}],
+    )
 
     # new key appears
-    logger.log_metrics({"a": 1, "b": 2, "c": 3})
-    with open(logger.experiment.metrics_file_path) as file:
-        header = file.readline().strip()
-        assert set(header.split(",")) == {"step", "a", "b", "c"}
+    logger.log_metrics({"a": 11, "b": 22, "c": 33})
+    _assert_csv_content(
+        logger.experiment.metrics_file_path,
+        expected_headers={"step", "a", "b", "c"},
+        expected_content=[
+            {"step": "0", "a": "1", "b": "2", "c": ""},
+            {"step": "0", "a": "11", "b": "22", "c": "33"},
+        ],
+    )
 
     # key disappears
-    logger.log_metrics({"a": 1, "c": 3})
-    with open(logger.experiment.metrics_file_path) as file:
-        header = file.readline().strip()
-        assert set(header.split(",")) == {"step", "a", "b", "c"}
+    logger.log_metrics({"a": 111, "c": 333})
+    _assert_csv_content(
+        logger.experiment.metrics_file_path,
+        expected_headers={"step", "a", "b", "c"},
+        expected_content=[
+            {"step": "0", "a": "1", "b": "2", "c": ""},
+            {"step": "0", "a": "11", "b": "22", "c": "33"},
+            {"step": "0", "a": "111", "b": "", "c": "333"},
+        ],
+    )
 
 
-def test_rewrite_with_new_header(tmp_path):
-    # write a csv file manually
-    with open(tmp_path / "metrics.csv", "w") as file:
-        file.write("step,metric1,metric2\n")
-        file.write("0,1,22\n")
+def _assert_csv_content(
+    path: str,
+    expected_headers: Set[str],
+    expected_content: List[Dict[str, str]],
+) -> None:
+    """Verifies the content of a local csv file with the expected ones."""
+    headers, content = _read_csv(path)
+    assert headers == expected_headers
+    for actual, expected in itertools.zip_longest(content, expected_content):
+        assert actual == expected
 
-    writer = _ExperimentWriter(log_dir=str(tmp_path))
-    new_columns = ["step", "metric1", "metric2", "metric3"]
-    writer._rewrite_with_new_header(new_columns)
 
-    # the rewritten file should have the new columns
-    with open(tmp_path / "metrics.csv") as file:
-        header = file.readline().strip().split(",")
-        assert header == new_columns
-        logs = file.readline().strip().split(",")
-        assert logs == ["0", "1", "22", ""]
+def _read_csv(path: str) -> Tuple[Set[str], List[Dict[str, str]]]:
+    """Reads a local csv file and returns the headers and content."""
+    with open(path) as file:
+        reader = csv.DictReader(file)
+        headers = set(reader.fieldnames)
+        content = list(reader)
+    return headers, content
